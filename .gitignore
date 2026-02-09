@@ -1,0 +1,55 @@
+# Quartus build databases
+db/
+incremental_db/
+greybox_tmp/
+
+# Quartus compilation output
+output_files/
+
+# QSys generated system
+soc_system/
+
+# Simulation files
+sim/
+
+# Generated headers
+qsys_headers/
+
+# Quartus workspace (user-specific)
+*.qws
+
+# Generated / derived reports
+*.sopcinfo
+*.ipregen.rpt
+c5_pin_model_dump.txt
+hps_sdram_p0_*.txt
+hps_sdram_p0_*.csv
+DE10_NANO_SoC_GHRD_assignment_defaults.qdf
+
+# Generated device tree / board info
+soc_system.dts
+soc_system.dtb
+soc_system_board_info.xml
+
+# Backup / temp files
+*.bak
+*~
+nul
+
+# Debug logs
+debugging/
+
+# Preloader BSP generated
+software/spl_bsp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE / tools
+.idea/
+.vscode/
+.claude/
+
+# QSys editor temp
+.qsys_edit/
