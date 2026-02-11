@@ -53,3 +53,6 @@ Thumbs.db
 
 # QSys editor temp
 .qsys_edit/
+
+# test results log
+software/bitnet_test/result.log
