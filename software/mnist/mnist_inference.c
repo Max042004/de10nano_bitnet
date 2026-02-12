@@ -412,7 +412,7 @@ static int mode_files(int argc, char **argv, int start_idx)
 		}
 
 		uint32_t total_cycles = layer_cycles[0] + layer_cycles[1] + layer_cycles[2];
-		double us = total_cycles / 50.0;  /* 50 MHz clock */
+		double us = total_cycles / 100.0;  /* 100 MHz clock */
 
 		count++;
 		if (resized) {
@@ -559,7 +559,7 @@ static int mode_benchmark(void)
 
 	/* Summary */
 	double avg_fpga_cycles = (double)total_fpga_cycles / NUM_TEST_IMAGES;
-	double avg_fpga_us = avg_fpga_cycles / 50.0;  /* 50 MHz clock */
+	double avg_fpga_us = avg_fpga_cycles / 100.0;  /* 100 MHz clock */
 	double avg_arm_us = total_arm_us / NUM_TEST_IMAGES;
 	double speedup = (avg_fpga_us > 0) ? avg_arm_us / avg_fpga_us : 0;
 
