@@ -109,7 +109,7 @@ set_interface_assignment avs_slave embeddedsw.configuration.isPrintableDevice 0
 
 
 #
-# connection point avm_master — Avalon-MM Master (DDR3 weight streaming, 128-bit)
+# connection point avm_master — Avalon-MM Master (DDR3 weight streaming, 256-bit)
 #
 add_interface avm_master avalon start
 set_interface_property avm_master addressUnits SYMBOLS
@@ -137,10 +137,10 @@ set_interface_property avm_master SVD_ADDRESS_GROUP ""
 
 add_interface_port avm_master io_master_address address Output 32
 add_interface_port avm_master io_master_read read Output 1
-add_interface_port avm_master io_master_readdata readdata Input 128
+add_interface_port avm_master io_master_readdata readdata Input 256
 add_interface_port avm_master io_master_waitrequest waitrequest Input 1
 add_interface_port avm_master io_master_readdatavalid readdatavalid Input 1
-add_interface_port avm_master io_master_burstcount burstcount Output 5
+add_interface_port avm_master io_master_burstcount burstcount Output 4
 
 
 #

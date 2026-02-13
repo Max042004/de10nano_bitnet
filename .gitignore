@@ -56,3 +56,7 @@ Thumbs.db
 
 # test results log
 software/bitnet_test/result.log
+
+# reference projects
+bitmamba.cpp-main/
+gemmini-master/

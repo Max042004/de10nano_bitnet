@@ -37,10 +37,10 @@
 #define REG_ACT_BASE    0x80   /* W:  activation[i] at 0x80 + i*4 */
 #define REG_RES_BASE    0x2000 /* R:  result[i]     at 0x2000 + i*4 */
 
-/* Weight encoding: 2 bits per weight, 64 weights per 128-bit word */
+/* Weight encoding: 2 bits per weight, 128 weights per 256-bit word */
 /*   00 = 0    01 = +1    10 = -1    11 = reserved                 */
 
-#define NUM_PES 64
+#define NUM_PES 128
 
 /* --- Test framework macros --- */
 
@@ -155,13 +155,13 @@ static int wait_done(volatile uint32_t *base, int timeout_us)
 
 /* --- Weight packing --- */
 
-/* Pack 64 ternary weights into a 128-bit (4x uint32_t) DDR3 word.
+/* Pack 128 ternary weights into a 256-bit (8x uint32_t) DDR3 word.
  * weights[i] = -1, 0, or +1.  Encoding: 00=0, 01=+1, 10=-1 */
-static void pack_weights(const int8_t weights[64], uint32_t out[4])
+static void pack_weights(const int8_t weights[128], uint32_t out[8])
 {
 	int i;
-	memset(out, 0, 16);
-	for (i = 0; i < 64; i++) {
+	memset(out, 0, 32);
+	for (i = 0; i < 128; i++) {
 		uint32_t enc;
 		if (weights[i] == 1)       enc = 0x1;
 		else if (weights[i] == -1) enc = 0x2;
@@ -181,12 +181,12 @@ static void write_weight_matrix(const int8_t *wmat, int M, int K)
 
 	for (row = 0; row < M; row++) {
 		for (tile = 0; tile < tiles_per_row; tile++) {
-			int8_t chunk[64];
-			uint32_t packed[4];
+			int8_t chunk[128];
+			uint32_t packed[8];
 			int col_start = tile * NUM_PES;
 			int i;
 
-			for (i = 0; i < 64; i++) {
+			for (i = 0; i < 128; i++) {
 				int col = col_start + i;
 				if (col < K)
 					chunk[i] = wmat[row * K + col];
@@ -196,9 +196,9 @@ static void write_weight_matrix(const int8_t *wmat, int M, int K)
 
 			pack_weights(chunk, packed);
 
-			/* Write 128-bit word to DDR3 */
-			uint32_t word_offset = (row * tiles_per_row + tile) * 4; /* in uint32 units */
-			for (i = 0; i < 4; i++)
+			/* Write 256-bit word to DDR3 */
+			uint32_t word_offset = (row * tiles_per_row + tile) * 8; /* in uint32 units */
+			for (i = 0; i < 8; i++)
 				g_ddr3[word_offset + i] = packed[i];
 		}
 	}
