@@ -122,7 +122,7 @@ set_interface_property avm_master doStreamReads false
 set_interface_property avm_master doStreamWrites false
 set_interface_property avm_master holdTime 0
 set_interface_property avm_master linewrapBursts false
-set_interface_property avm_master maximumPendingReadTransactions 1
+set_interface_property avm_master maximumPendingReadTransactions 16
 set_interface_property avm_master maximumPendingWriteTransactions 0
 set_interface_property avm_master readLatency 0
 set_interface_property avm_master readWaitTime 1
@@ -140,6 +140,7 @@ add_interface_port avm_master io_master_read read Output 1
 add_interface_port avm_master io_master_readdata readdata Input 128
 add_interface_port avm_master io_master_waitrequest waitrequest Input 1
 add_interface_port avm_master io_master_readdatavalid readdatavalid Input 1
+add_interface_port avm_master io_master_burstcount burstcount Output 5
 
 
 #
