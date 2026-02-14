@@ -96,7 +96,7 @@ set_interface_property avs_slave PORT_NAME_MAP ""
 set_interface_property avs_slave CMSIS_SVD_VARIABLES ""
 set_interface_property avs_slave SVD_ADDRESS_GROUP ""
 
-add_interface_port avs_slave io_slave_address address Input 14
+add_interface_port avs_slave io_slave_address address Input 15
 add_interface_port avs_slave io_slave_read read Input 1
 add_interface_port avs_slave io_slave_write write Input 1
 add_interface_port avs_slave io_slave_writedata writedata Input 32
@@ -140,7 +140,7 @@ add_interface_port avm_master io_master_read read Output 1
 add_interface_port avm_master io_master_readdata readdata Input 256
 add_interface_port avm_master io_master_waitrequest waitrequest Input 1
 add_interface_port avm_master io_master_readdatavalid readdatavalid Input 1
-add_interface_port avm_master io_master_burstcount burstcount Output 4
+add_interface_port avm_master io_master_burstcount burstcount Output 5
 
 
 #

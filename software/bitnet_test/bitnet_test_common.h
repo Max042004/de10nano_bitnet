@@ -35,7 +35,7 @@
 #define REG_SHIFT_AMT   0x14   /* RW: requantization shift (0-31) */
 #define REG_PERF_CYCLES 0x18   /* R:  cycle count of last run */
 #define REG_ACT_BASE    0x80   /* W:  activation[i] at 0x80 + i*4 */
-#define REG_RES_BASE    0x2000 /* R:  result[i]     at 0x2000 + i*4 */
+#define REG_RES_BASE    0x4000 /* R:  result[i]     at 0x4000 + i*4 */
 
 /* Weight encoding: 2 bits per weight, 128 weights per 256-bit word */
 /*   00 = 0    01 = +1    10 = -1    11 = reserved                 */
