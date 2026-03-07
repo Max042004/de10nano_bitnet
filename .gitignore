@@ -60,3 +60,6 @@ software/bitnet_test/result.log
 # reference projects
 bitmamba.cpp-main/
 gemmini-master/
+bitmamba.c/
+plan.md
+reference-paper/

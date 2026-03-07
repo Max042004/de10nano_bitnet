@@ -6,7 +6,7 @@
  *   - fpga_bitlinear(): INT8 activation -> FPGA matmul -> INT8 result
  *   - bitlinear_forward_fpga(): full float->float BitLinear with FPGA offload
  *
- * The accelerator has maxDimK=2048 and maxDimM=1024. For M > 1024, this
+ * The accelerator has maxDimK=4096 and maxDimM=1024. For M > 1024, this
  * driver tiles over M in software (multiple FPGA invocations with the same
  * activations persisting in BRAM).
  */
@@ -37,11 +37,11 @@
 #define REG_SHIFT_AMT   0x14
 #define REG_PERF_CYCLES 0x18
 #define REG_ACT_BASE    0x80
-#define REG_RES_BASE    0x4000
+#define REG_RES_BASE    0x8000
 
 /* --- Hardware parameters --- */
 #define FPGA_NUM_PES    128
-#define FPGA_MAX_DIM_K  2048
+#define FPGA_MAX_DIM_K  4096
 #define FPGA_MAX_DIM_M  1024
 #define FPGA_BYTES_PER_BEAT 32  /* 256-bit = 32 bytes */
 
