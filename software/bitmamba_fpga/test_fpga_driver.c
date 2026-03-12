@@ -1,14 +1,11 @@
 /*
- * test_fpga_driver.c — Smoke test for the FPGA BitLinear driver.
+ * test_fpga_driver.c -- Smoke test for the FPGA BitLinear driver.
  *
  * Tests:
  *   1. fpga_init / fpga_cleanup
- *   2. fpga_bitlinear with small known weights (reuses MNIST-style test)
- *   3. M-tiling: M > 1024 split across multiple FPGA invocations
+ *   2. fpga_bitlinear with known packed weights
+ *   3. M-tiling behavior
  *   4. bitlinear_forward_fpga end-to-end float->float path
- *
- * Usage: ./test_fpga_driver
- * Must run as root (needs /dev/mem access).
  */
 
 #include <stdio.h>
@@ -28,12 +25,12 @@ static int tests_failed = 0;
 		printf("  PASS: %s\n", (name)); \
 		tests_passed++; \
 	} else { \
-		printf("  FAIL: %s — got %d, expected %d\n", (name), (int)(actual), (int)(expected)); \
+		printf("  FAIL: %s -- got %d, expected %d\n", (name), (int)(actual), (int)(expected)); \
 		tests_failed++; \
 	} \
 } while (0)
 
-/* Pack 128 ternary weights into DDR3 format (same as bitnet_test_common.h) */
+/* Pack 128 ternary weights into one 256-bit beat (8 x uint32_t). */
 static void pack_weights_128(const int8_t weights[128], uint32_t out[8])
 {
 	int i;
@@ -47,7 +44,6 @@ static void pack_weights_128(const int8_t weights[128], uint32_t out[8])
 	}
 }
 
-/* Write a simple weight matrix to DDR3 for testing */
 static void write_test_weights(int M, int K, int8_t fill_weight)
 {
 	int tiles_per_row = (K + FPGA_NUM_PES - 1) / FPGA_NUM_PES;
@@ -72,82 +68,69 @@ static void write_test_weights(int M, int K, int8_t fill_weight)
 	}
 }
 
-/* Test 1: Basic M=4, K=128, all +1 weights, uniform activations */
 static void test_basic(void)
 {
 	printf("\n--- Test 1: Basic M=4, K=128, all +1 ---\n");
 
-	int M = 4, K = 128, shift = 4;
+	int M = 4, K = 128;
 	int8_t acts[128];
-	int8_t results[4];
+	int32_t results[4];
 	int i;
 
-	/* All activations = 2, all weights = +1 */
 	for (i = 0; i < K; i++) acts[i] = 2;
 	write_test_weights(M, K, 1);
 
-	/* Expected: 128 * 2 = 256 >> 4 = 16 */
-	fpga_bitlinear(acts, K, DDR3_BASE, M, shift,
+	fpga_bitlinear(acts, K, DDR3_BASE, M,
 	               (K / FPGA_NUM_PES) * FPGA_BYTES_PER_BEAT, results);
 
 	for (i = 0; i < M; i++) {
 		char name[64];
-		snprintf(name, sizeof(name), "Row %d = 16", i);
-		ASSERT_EQ(name, results[i], 16);
+		snprintf(name, sizeof(name), "Row %d = 256", i);
+		ASSERT_EQ(name, results[i], 256);
 	}
 }
 
-/* Test 2: K=2048 (max K, 16 tiles per row) */
 static void test_max_k(void)
 {
 	printf("\n--- Test 2: K=2048, M=1, all +1, act=1 ---\n");
 
-	int M = 1, K = 2048, shift = 5;
-	int8_t *acts = (int8_t *)malloc(K);
-	int8_t results[1];
+	int M = 1, K = 2048;
+	int8_t *acts = (int8_t *)malloc((size_t)K);
+	int32_t results[1];
 	int i;
 
 	for (i = 0; i < K; i++) acts[i] = 1;
 	write_test_weights(M, K, 1);
 
-	/* Expected: 2048 * 1 = 2048 >> 5 = 64 */
-	fpga_bitlinear(acts, K, DDR3_BASE, M, shift,
+	fpga_bitlinear(acts, K, DDR3_BASE, M,
 	               (K / FPGA_NUM_PES) * FPGA_BYTES_PER_BEAT, results);
 
-	ASSERT_EQ("K=2048 dot product >> 5 = 64", results[0], 64);
+	ASSERT_EQ("K=2048 raw accumulator", results[0], 2048);
 	free(acts);
 }
 
-/* Test 3: Float-to-float bitlinear_forward_fpga path */
 static void test_float_path(void)
 {
 	printf("\n--- Test 3: bitlinear_forward_fpga float path ---\n");
 
-	int K = 128, M = 4, shift = 4;
+	int K = 128, M = 4;
 	float x[128];
 	float norm_w[128];
 	float out[4];
 	int i;
 
-	/* Uniform input and unit norm weights */
 	for (i = 0; i < K; i++) {
 		x[i] = 1.0f;
 		norm_w[i] = 1.0f;
 	}
 
-	/* All +1 weights */
 	write_test_weights(M, K, 1);
 
 	bitlinear_forward_fpga(x, K, M, norm_w, DDR3_BASE,
-	                       1.0f, /* weight_scale */
+	                       1.0f,
 	                       (K / FPGA_NUM_PES) * FPGA_BYTES_PER_BEAT,
-	                       shift, out);
+	                       out);
 
-	/* Output should be positive and nonzero (exact value depends on
-	   quantization rounding, but should be approximately:
-	   INT8(1.0 * 127/max_abs) = 127 for all, dot = 128*127 = 16256,
-	   >> 4 = 1016, clamp 127. Then dequant: 127 / (scale_x * 1.0).
-	   With uniform input, scale_x = 127/1.0 = 127, so out ~ 127/127 = 1.0 */
 	printf("  Float output: [%.4f, %.4f, %.4f, %.4f]\n",
 		out[0], out[1], out[2], out[3]);
 
