@@ -39,11 +39,11 @@
 #define REG_WEIGHTS_PER_BEAT 0x20
 #define REG_ENCODING_MODE    0x24
 #define REG_ACT_BASE         0x80
-#define REG_RES_BASE         0x4000
+#define REG_RES_BASE         0x8000
 
 /* --- Expected hardware contract (DE10-Nano 128-PE ternary target) --- */
 #define FPGA_NUM_PES         128
-#define FPGA_MAX_DIM_K       2048
+#define FPGA_MAX_DIM_K       4096
 #define FPGA_MAX_DIM_M       1024
 #define FPGA_BYTES_PER_BEAT  32   /* 256-bit = 32 bytes */
 #define FPGA_ENCODING_MODE   0    /* 0 = 2-bit ternary */
