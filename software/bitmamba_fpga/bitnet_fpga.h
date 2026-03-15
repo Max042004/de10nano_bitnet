@@ -599,6 +599,11 @@ static void dequantize_results(const int32_t *fpga_out, int size,
 		out[i] = (float)fpga_out[i] * inv_scale;
 }
 
+/** Fused BitLinear forward: quant → FPGA matmul → dequant with M-tile pipelining.
+ *
+ * Overlaps dequantization of M-tile N with FPGA computation of M-tile N+1.
+ * For in_proj (M=8224, 9 tiles), this hides ~8 dequant passes behind FPGA time.
+ */
 static void bitlinear_forward_fpga(const float *x, int K, int M,
                                    const float *norm_weight,
                                    uint32_t weight_base,
@@ -606,8 +611,8 @@ static void bitlinear_forward_fpga(const float *x, int K, int M,
                                    int stride,
                                    float *out)
 {
-	int8_t *x_quant = fpga_x_quant_buf;
-	int32_t *raw_results = fpga_raw_results_buf;
+	int8_t *x_quant;
+	int32_t *raw_results;
 	int use_scratch = fpga_reserve_scratch((size_t)K, (size_t)M) == 0;
 	if (use_scratch) {
 		x_quant = fpga_x_quant_buf;
@@ -623,10 +628,82 @@ static void bitlinear_forward_fpga(const float *x, int K, int M,
 		}
 	}
 
+	/* ARM: quantize activations */
 	float scale_x = rms_norm_int8(x, norm_weight, K, x_quant);
-	fpga_bitlinear(x_quant, K, weight_base, M, stride, raw_results);
+	float inv_scale = 1.0f / (scale_x * weight_scale);
 
-	dequantize_results(raw_results, M, scale_x, weight_scale, out);
+	/* Write activations to DDR3 once (shared across all M-tiles) */
+	uint32_t act_phys = fpga_ddr3_phys_base + fpga_act_ddr3_offset;
+	uint32_t res_phys = fpga_ddr3_phys_base + fpga_res_ddr3_offset;
+	memcpy((void *)(fpga_ddr3 + fpga_act_ddr3_offset / 4), x_quant, (size_t)K);
+	fpga_reg_write(REG_ACT_DDR3_BASE, act_phys);
+	fpga_reg_write(REG_DIM_K, (uint32_t)K);
+	fpga_reg_write(REG_SHIFT_AMT, 0);
+
+	static int addr_mode_logged = 0;
+	int rows_done = 0;
+	int prev_tile_m = 0;    /* previous tile's M (for pipelined dequant) */
+	int prev_tile_start = 0;
+
+	while (rows_done < M) {
+		int tile_m = M - rows_done;
+		if (tile_m > FPGA_MAX_DIM_M)
+			tile_m = FPGA_MAX_DIM_M;
+
+		uint32_t tile_weight_base = weight_base + (uint32_t)rows_done * (uint32_t)stride;
+		uint32_t tile_weight_hw_addr = tile_weight_base;
+		if (!fpga_weight_addr_mode_abs) {
+			if (tile_weight_base < fpga_ddr3_phys_base) {
+				memset(&out[rows_done], 0, (size_t)tile_m * sizeof(float));
+				rows_done += tile_m;
+				continue;
+			}
+			tile_weight_hw_addr = tile_weight_base - fpga_ddr3_phys_base;
+		}
+		if (!addr_mode_logged) {
+			fprintf(stderr,
+				"[FPGA] Weight addr sample: user=0x%08X hw=0x%08X ddr_base=0x%08X\n",
+				tile_weight_base, tile_weight_hw_addr, fpga_ddr3_phys_base);
+			addr_mode_logged = 1;
+		}
+
+		/* Start FPGA on this M-tile */
+		fpga_reg_write(REG_WEIGHT_BASE, tile_weight_hw_addr);
+		fpga_reg_write(REG_DIM_M, (uint32_t)tile_m);
+		fpga_reg_write(REG_RES_DDR3_BASE, res_phys);
+		fpga_reg_write(REG_CTRL, CTRL_START | CTRL_DDR3_MODE);
+
+		/* Pipeline: dequantize PREVIOUS tile while FPGA computes THIS tile */
+		if (prev_tile_m > 0) {
+			int i;
+			for (i = 0; i < prev_tile_m; i++)
+				out[prev_tile_start + i] = (float)raw_results[prev_tile_start + i] * inv_scale;
+		}
+
+		/* Wait for current tile */
+		if (fpga_wait_done(fpga_wait_timeout_us) < 0) {
+			fprintf(stderr, "fpga_bitlinear: timeout at M-tile offset %d\n", rows_done);
+			memset(&out[rows_done], 0, (size_t)tile_m * sizeof(float));
+			rows_done += tile_m;
+			continue;
+		}
+
+		/* Read results from DDR3 */
+		memcpy(&raw_results[rows_done],
+		       (void *)(fpga_ddr3 + fpga_res_ddr3_offset / 4),
+		       (size_t)tile_m * sizeof(int32_t));
+
+		prev_tile_start = rows_done;
+		prev_tile_m = tile_m;
+		rows_done += tile_m;
+	}
+
+	/* Dequantize last tile (no next FPGA tile to overlap with) */
+	if (prev_tile_m > 0) {
+		int i;
+		for (i = 0; i < prev_tile_m; i++)
+			out[prev_tile_start + i] = (float)raw_results[prev_tile_start + i] * inv_scale;
+	}
 
 	if (!use_scratch) {
 		free(x_quant);
