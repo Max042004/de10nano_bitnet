@@ -1,77 +1,77 @@
 # DE10-Nano BitNet Inference SoC
 
-A complete FPGA SoC design that runs **BitMamba 255M** and **MNIST** neural network inference on the **Terasic DE10-Nano** (Cyclone V 5CSEBA6U23I7) â€” using zero DSP blocks. Built on Intel's Golden Hardware Reference Design (GHRD), extended with a custom BitNet b1.58 ternary-weight accelerator written in Chisel.
+A complete FPGA SoC design that runs **BitMamba 255M** and **MNIST** neural network inference on the **Terasic DE10-Nano** (Cyclone V 5CSEBA6U23I7) ??using zero DSP blocks. Built on Intel's Golden Hardware Reference Design (GHRD), extended with a custom BitNet b1.58 ternary-weight accelerator written in Chisel.
 
 ## What This Does
 
 The ARM Cortex-A9 on the Cyclone V SoC runs Linux and handles quantization, normalization, and control. The FPGA fabric contains a 128-PE accelerator that streams ternary weights from DDR3 and computes matrix-vector products using only LUT logic. Together they run real neural network inference:
 
-- **BitMamba 255M** â€” 255M-parameter Mamba2 language model, full transformer-free inference
-- **MNIST digit recognition** â€” 3-layer BitNet MLP (784 -> 256 -> 128 -> 10), live PGM image input
+- **BitMamba 255M** ??255M-parameter Mamba2 language model, full transformer-free inference
+- **MNIST digit recognition** ??3-layer BitNet MLP (784 -> 256 -> 128 -> 10), live PGM image input
 
 ## SoC Architecture
 
 ```
 DE10-Nano (Cyclone V SoC)
-â”‚
-â”œâ”€â”€ HPS (ARM Cortex-A9 dual-core, Linux)
-â”‚   â”œâ”€â”€ DDR3 1GB (shared: Linux + model weights)
-â”‚   â”œâ”€â”€ h2f_lw_axi_master â”€â”€â–º BitNet slave (control/status, activations, results)
-â”‚   â””â”€â”€ f2sdram bridge     â—„â”€â”€ BitNet master (256-bit DDR3 weight streaming)
-â”‚
-â”œâ”€â”€ FPGA Fabric (100 MHz via PLL)
-â”‚   â”œâ”€â”€ BitNetAccelerator (Chisel-generated, 128 PEs, 0 DSP)
-â”‚   â”‚   â”œâ”€â”€ Avalon-MM Slave   â€” HPS writes activations, reads raw 32-bit results
-â”‚   â”‚   â”œâ”€â”€ Avalon-MM Master  â€” burst-reads 256-bit packed weights from DDR3
-â”‚   â”‚   â”œâ”€â”€ 128 Processing Elements (ternary multiply = pass/negate/zero)
-â”‚   â”‚   â”œâ”€â”€ 7-level pipelined adder tree
-â”‚   â”‚   â””â”€â”€ Double-buffered weight prefetch (hides DDR3 latency)
-â”‚   â”œâ”€â”€ custom_leds (8-bit LED controller)
-â”‚   â””â”€â”€ pio64_in / pio64_out (64-bit parallel I/O)
-â”‚
-â””â”€â”€ Platform Designer (soc_system.qsys)
-    â””â”€â”€ Interconnect, clock crossings, reset, SDRAM controller
+??
+?œâ??€ HPS (ARM Cortex-A9 dual-core, Linux)
+??  ?œâ??€ DDR3 1GB (shared: Linux + model weights)
+??  ?œâ??€ h2f_lw_axi_master ?€?€??BitNet slave (control/status, activations, results)
+??  ?”â??€ f2sdram bridge     ?„â??€ BitNet master (256-bit DDR3 weight streaming)
+??
+?œâ??€ FPGA Fabric (100 MHz via PLL)
+??  ?œâ??€ BitNetAccelerator (Chisel-generated, 128 PEs, 0 DSP)
+??  ??  ?œâ??€ Avalon-MM Slave   ??HPS writes activations, reads raw 32-bit results
+??  ??  ?œâ??€ Avalon-MM Master  ??burst-reads 256-bit packed weights from DDR3
+??  ??  ?œâ??€ 128 Processing Elements (ternary multiply = pass/negate/zero)
+??  ??  ?œâ??€ 7-level pipelined adder tree
+??  ??  ?”â??€ Double-buffered weight prefetch (hides DDR3 latency)
+??  ?œâ??€ custom_leds (8-bit LED controller)
+??  ?”â??€ pio64_in / pio64_out (64-bit parallel I/O)
+??
+?”â??€ Platform Designer (soc_system.qsys)
+    ?”â??€ Interconnect, clock crossings, reset, SDRAM controller
 ```
 
 ## Repository Structure
 
 ```
 ghrd_bitnet/
-â”œâ”€â”€ DE10_NANO_SoC_GHRD.v          # FPGA top-level (PLL, soc_system instantiation)
-â”œâ”€â”€ DE10_NANO_SoC_GHRD.qsf        # Pin assignments, device settings, HDL source list
-â”œâ”€â”€ DE10_NANO_SOC_GHRD.sdc        # Timing constraints
-â”œâ”€â”€ soc_system.qsys               # Platform Designer system definition
-â”œâ”€â”€ bitnet_accel_hw.tcl            # BitNet accelerator Platform Designer component
-â”œâ”€â”€ bitnet/                        # BitNet accelerator submodule (Chisel RTL + tests)
-â”‚   â”œâ”€â”€ chisel/src/main/scala/     #   Chisel source (13 modules)
-â”‚   â”œâ”€â”€ chisel/src/test/scala/     #   Test suites (8 files)
-â”‚   â””â”€â”€ chisel/generated/          #   Generated SystemVerilog for Quartus
-â”œâ”€â”€ bitmamba.cpp-main/             # BitMamba 255M C++ inference engine
-â”‚   â”œâ”€â”€ src/                       #   Model implementation
-â”‚   â”œâ”€â”€ scripts/                   #   Weight export tools
-â”‚   â””â”€â”€ build-arm/                 #   ARM cross-compiled build
-â”œâ”€â”€ software/
-â”‚   â”œâ”€â”€ mnist/                     # MNIST inference demo
-â”‚   â”‚   â”œâ”€â”€ mnist_inference.c      #   3-layer MLP inference on FPGA
-â”‚   â”‚   â””â”€â”€ generated/             #   Pre-exported weights and test data
-â”‚   â”œâ”€â”€ bitmamba_fpga/             # BitMamba FPGA driver
-â”‚   â”‚   â”œâ”€â”€ bitnet_fpga.h          #   FPGA driver (init, matmul, float path)
-â”‚   â”‚   â””â”€â”€ test_fpga_driver.c     #   Driver smoke tests
-â”‚   â”œâ”€â”€ bitnet_test/               # Hardware verification tests
-â”‚   â”‚   â””â”€â”€ bitnet_test_common.h   #   Shared mmap, register access, weight packing
-â”‚   â””â”€â”€ spl_bsp/                   # Preloader BSP
-â”œâ”€â”€ ip/                            # Custom IP cores (LEDs, PIO64)
-â”œâ”€â”€ hps_isw_handoff/               # HPS hardware-software handoff
-â””â”€â”€ output_files/                  # Quartus compilation output (.sof, .rbf)
+?œâ??€ DE10_NANO_SoC_GHRD.v          # FPGA top-level (PLL, soc_system instantiation)
+?œâ??€ DE10_NANO_SoC_GHRD.qsf        # Pin assignments, device settings, HDL source list
+?œâ??€ DE10_NANO_SOC_GHRD.sdc        # Timing constraints
+?œâ??€ soc_system.qsys               # Platform Designer system definition
+?œâ??€ bitnet_accel_hw.tcl            # BitNet accelerator Platform Designer component
+?œâ??€ bitnet/                        # BitNet accelerator submodule (Chisel RTL + tests)
+??  ?œâ??€ chisel/src/main/scala/     #   Chisel source (13 modules)
+??  ?œâ??€ chisel/src/test/scala/     #   Test suites (8 files)
+??  ?”â??€ chisel/generated/          #   Generated SystemVerilog for Quartus
+?œâ??€ bitmamba.cpp-main/             # BitMamba 255M C++ inference engine
+??  ?œâ??€ src/                       #   Model implementation
+??  ?œâ??€ scripts/                   #   Weight export tools
+??  ?”â??€ build-arm/                 #   ARM cross-compiled build
+?œâ??€ software/
+??  ?œâ??€ mnist/                     # MNIST inference demo
+??  ??  ?œâ??€ mnist_inference.c      #   3-layer MLP inference on FPGA
+??  ??  ?”â??€ generated/             #   Pre-exported weights and test data
+??  ?œâ??€ bitmamba_fpga/             # BitMamba FPGA driver
+??  ??  ?œâ??€ bitnet_fpga.h          #   FPGA driver (init, matmul, float path)
+??  ??  ?”â??€ test_fpga_driver.c     #   Driver smoke tests
+??  ?œâ??€ bitnet_test/               # Hardware verification tests
+??  ??  ?”â??€ bitnet_test_common.h   #   Shared mmap, register access, weight packing
+??  ?”â??€ spl_bsp/                   # Preloader BSP
+?œâ??€ ip/                            # Custom IP cores (LEDs, PIO64)
+?œâ??€ hps_isw_handoff/               # HPS hardware-software handoff
+?”â??€ output_files/                  # Quartus compilation output (.sof, .rbf)
 ```
 
 ## Quick Start
 
 ### Prerequisites
 
-- **Quartus Prime Lite 18.1** â€” `C:\intelFPGA_lite\18.1\quartus\bin64\` on PATH
-- **sbt + Java 11** â€” for Chisel RTL (set `JAVA_HOME` to Eclipse Temurin 11)
-- **ARM cross-compiler** â€” `arm-linux-gnueabihf-gcc` for HPS software
+- **Quartus Prime Lite 18.1** ??`C:\intelFPGA_lite\18.1\quartus\bin64\` on PATH
+- **sbt + Java 11** ??for Chisel RTL (set `JAVA_HOME` to Eclipse Temurin 11)
+- **ARM cross-compiler** ??`arm-linux-gnueabihf-gcc` for HPS software
 - **DE10-Nano** with SD card running Linux
 
 ### Build FPGA
@@ -122,7 +122,7 @@ The accelerator is the core of this project. Key specs:
 | Processing Elements | 128 (ternary multiply via LUT) |
 | Avalon Master | 256-bit, burst DDR3 reads |
 | Avalon Slave | 15-bit address, 32-bit data |
-| Max dimensions | M=1024, K=2048 |
+| Max dimensions | M=1024, K=4096 |
 | Output | Raw 32-bit accumulator (ARM dequantizes) |
 | Adder tree | 7-level, fully pipelined (7 cycles) |
 | Clock | 100 MHz (PLL from 50 MHz) |
@@ -164,4 +164,5 @@ Output goes to `bitnet/chisel/generated/BitNetAccelerator.sv`.
 
 ## License
 
-GHRD base design by Terasic/Intel. BitMamba.cpp under MIT license. BitNet accelerator â€” see repository for details.
+GHRD base design by Terasic/Intel. BitMamba.cpp under MIT license. BitNet accelerator ??see repository for details.
+

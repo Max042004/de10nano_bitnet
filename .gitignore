@@ -63,3 +63,6 @@ gemmini-master/
 bitmamba.c/
 plan.md
 reference-paper/
+
+# python venv
+bitmamba.c/.venv/*

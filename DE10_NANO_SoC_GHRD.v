@@ -45,7 +45,7 @@ wire [6:0]	fpga_led_internal;
 assign LED[7: 1] = fpga_led_internal;
 
 //=======================================================
-//  PLL: 50 MHz -> 100 MHz system clock
+//  PLL: 50 MHz -> 100 MHz system clock (2:1 ratio)
 //=======================================================
 wire pll_100m;
 wire pll_locked;

@@ -22,6 +22,14 @@
          type = "boolean";
       }
    }
+   element bitnet_accel_0.avs_slave
+   {
+      datum baseAddress
+      {
+         value = "0";
+         type = "String";
+      }
+   }
    element clk_0
    {
       datum _sortIndex

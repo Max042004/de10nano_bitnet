@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## connect DE10-nano
+ssh root@192.168.1.108
+passwd: root
+
 ## debug regulations
 Writes discoverd bug in a bug list. Only fixing one bug at a time, remember testing before commit. If testing failed, recover 
 modification and try to fix another bug which is more likely the root cause.

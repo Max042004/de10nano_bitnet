@@ -21,6 +21,8 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <sched.h>
+#include <time.h>
 
 /* --- Memory map constants --- */
 #define LW_BRIDGE_BASE  0xFF200000
@@ -38,15 +40,28 @@
 #define REG_NUM_PES          0x1C
 #define REG_WEIGHTS_PER_BEAT 0x20
 #define REG_ENCODING_MODE    0x24
+#define REG_ACT_DDR3_BASE    0x28
+#define REG_RES_DDR3_BASE    0x2C
 #define REG_ACT_BASE         0x80
 #define REG_RES_BASE         0x8000
+
+#define CTRL_START           0x01
+#define CTRL_DDR3_MODE       0x02
 
 /* --- Expected hardware contract (DE10-Nano 128-PE ternary target) --- */
 #define FPGA_NUM_PES         128
 #define FPGA_MAX_DIM_K       4096
 #define FPGA_MAX_DIM_M       1024
-#define FPGA_BYTES_PER_BEAT  32   /* 256-bit = 32 bytes */
+#define FPGA_BYTES_PER_BEAT  32   /* tile size: 128 PEs * 2-bit = 256 bits = 32 bytes */
 #define FPGA_ENCODING_MODE   0    /* 0 = 2-bit ternary */
+
+#if defined(__arm__) || defined(__aarch64__)
+#define FPGA_CPU_RELAX() __asm__ volatile("yield")
+#elif defined(__x86_64__) || defined(__i386__)
+#define FPGA_CPU_RELAX() __asm__ volatile("pause")
+#else
+#define FPGA_CPU_RELAX() ((void)0)
+#endif
 
 /* --- Global state --- */
 static int          fpga_devmem_fd = -1;
@@ -59,6 +74,10 @@ static uint32_t     fpga_bitnet_offset   = BITNET_OFFSET;
 static uint32_t     fpga_ddr3_phys_base  = 0;
 static uint32_t     fpga_ddr3_span       = 0;
 
+/* DDR3 buffer offsets for activation/result transfer (set in fpga_init) */
+static uint32_t     fpga_act_ddr3_offset = 0;
+static uint32_t     fpga_res_ddr3_offset = 0;
+
 /* Discovered at init from hardware capability registers */
 static uint32_t     fpga_hw_num_pes = 0;
 static uint32_t     fpga_hw_weights_per_beat = 0;
@@ -67,6 +86,10 @@ static int          fpga_weight_addr_mode_abs = 0;
 static int          fpga_status_debug = 0;
 static int          fpga_wait_timeout_us = 1000000;
 static int          fpga_strict_caps = 0;
+static int8_t      *fpga_x_quant_buf = NULL;
+static size_t       fpga_x_quant_cap = 0;
+static int32_t     *fpga_raw_results_buf = NULL;
+static size_t       fpga_raw_results_cap = 0;
 
 /* Forward declaration for debug helper. */
 static inline uint32_t fpga_reg_read(uint32_t offset);
@@ -293,11 +316,28 @@ static int fpga_init(uint32_t ddr3_base, uint32_t ddr3_span)
 		return -1;
 	}
 
+	/* Allocate DDR3 buffers for activation/result transfer after weight region.
+	 * Activations: up to FPGA_MAX_DIM_K bytes (4096).
+	 * Results: up to FPGA_MAX_DIM_M * 4 bytes (4096).
+	 * Both 4KB-aligned for burst efficiency. */
+	{
+		uint32_t weight_end = ddr3_span;  /* conservative: assume weights fill the span */
+		fpga_act_ddr3_offset = (weight_end - 16384) & ~4095U;  /* 4KB aligned, near end */
+		fpga_res_ddr3_offset = fpga_act_ddr3_offset + 8192;
+		fprintf(stderr,
+			"[FPGA] DDR3 act buffer: offset 0x%08X, res buffer: offset 0x%08X\n",
+			fpga_act_ddr3_offset, fpga_res_ddr3_offset);
+	}
+
 	return 0;
 }
 
 static void fpga_cleanup(void)
 {
+	if (fpga_x_quant_buf)
+		free(fpga_x_quant_buf);
+	if (fpga_raw_results_buf)
+		free(fpga_raw_results_buf);
 	if (fpga_ddr3 && fpga_ddr3 != MAP_FAILED)
 		munmap((void *)fpga_ddr3, fpga_ddr3_span);
 	if (fpga_lw_bridge && fpga_lw_bridge != MAP_FAILED)
@@ -318,14 +358,24 @@ static void fpga_cleanup(void)
 	fpga_hw_encoding_mode = 0;
 	fpga_wait_timeout_us = 1000000;
 	fpga_strict_caps = 0;
+	fpga_act_ddr3_offset = 0;
+	fpga_res_ddr3_offset = 0;
+	fpga_x_quant_buf = NULL;
+	fpga_x_quant_cap = 0;
+	fpga_raw_results_buf = NULL;
+	fpga_raw_results_cap = 0;
 }
 
 /* --- Wait for DONE --- */
 
 static int fpga_wait_done(int timeout_us)
 {
+	struct timespec start, now;
 	int saw_busy = 0;
-	while (timeout_us > 0) {
+	unsigned int spins = 0;
+
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	for (;;) {
 		uint32_t st = fpga_reg_read(REG_STATUS);
 		if (st & 0x2)
 			return 0;
@@ -335,10 +385,23 @@ static int fpga_wait_done(int timeout_us)
 			/* Legacy fallback: some RTL variants don't latch DONE but BUSY drops at completion. */
 			return 0;
 		}
-		usleep(10);
-		timeout_us -= 10;
+
+		spins++;
+		if ((spins & 0xFF) == 0) {
+			clock_gettime(CLOCK_MONOTONIC, &now);
+			long elapsed_us =
+				(long)(now.tv_sec - start.tv_sec) * 1000000L +
+				(long)(now.tv_nsec - start.tv_nsec) / 1000L;
+			if (elapsed_us >= timeout_us)
+				return -1;
+
+			/* Stay in a tight MMIO poll for a short window, then yield. */
+			if (spins >= 4096)
+				sched_yield();
+		} else {
+			FPGA_CPU_RELAX();
+		}
 	}
-	return -1;
 }
 
 /* --- Load FPGA weights into DDR3 --- */
@@ -391,7 +454,6 @@ static void fpga_bitlinear(const int8_t *activations, int K,
                            int stride,
                            int32_t *results)
 {
-	int i;
 	static int addr_mode_logged = 0;
 
 	if (K <= 0 || K > FPGA_MAX_DIM_K) {
@@ -401,9 +463,11 @@ static void fpga_bitlinear(const int8_t *activations, int K,
 		return;
 	}
 
-	for (i = 0; i < K; i++)
-		fpga_reg_write(REG_ACT_BASE + i * 4, (uint32_t)(uint8_t)activations[i]);
-
+	/* DDR3 mode: write activations to DDR3 via memcpy instead of LW bridge */
+	uint32_t act_phys = fpga_ddr3_phys_base + fpga_act_ddr3_offset;
+	uint32_t res_phys = fpga_ddr3_phys_base + fpga_res_ddr3_offset;
+	memcpy((void *)(fpga_ddr3 + fpga_act_ddr3_offset / 4), activations, (size_t)K);
+	fpga_reg_write(REG_ACT_DDR3_BASE, act_phys);
 	fpga_reg_write(REG_DIM_K, (uint32_t)K);
 	fpga_reg_write(REG_SHIFT_AMT, 0);
 
@@ -435,8 +499,9 @@ static void fpga_bitlinear(const int8_t *activations, int K,
 
 		fpga_reg_write(REG_WEIGHT_BASE, tile_weight_hw_addr);
 		fpga_reg_write(REG_DIM_M, (uint32_t)tile_m);
-		/* Match the previously working bitmamba.cpp driver behavior. */
-		fpga_reg_write(REG_CTRL, 0x1);
+		fpga_reg_write(REG_RES_DDR3_BASE, res_phys);
+		/* START with DDR3_MODE flag */
+		fpga_reg_write(REG_CTRL, CTRL_START | CTRL_DDR3_MODE);
 		if (fpga_status_debug && rows_done == 0)
 			fpga_log_status_sample("after START");
 
@@ -456,14 +521,47 @@ static void fpga_bitlinear(const int8_t *activations, int K,
 			continue;
 		}
 
-		for (i = 0; i < tile_m; i++)
-			results[rows_done + i] = (int32_t)fpga_reg_read(REG_RES_BASE + i * 4);
+		/* Read results from DDR3 via memcpy instead of LW bridge */
+		memcpy(&results[rows_done],
+		       (void *)(fpga_ddr3 + fpga_res_ddr3_offset / 4),
+		       (size_t)tile_m * sizeof(int32_t));
 
 		rows_done += tile_m;
 	}
 }
 
 /* --- ARM-side quantization helpers --- */
+
+static int fpga_reserve_scratch(size_t k_bytes, size_t m_elems)
+{
+	if (k_bytes > fpga_x_quant_cap) {
+		int8_t *new_x = (int8_t *)realloc(fpga_x_quant_buf, k_bytes);
+		if (!new_x)
+			return -1;
+		fpga_x_quant_buf = new_x;
+		fpga_x_quant_cap = k_bytes;
+	}
+
+	if (m_elems > fpga_raw_results_cap) {
+		int32_t *new_res = (int32_t *)realloc(
+			fpga_raw_results_buf, m_elems * sizeof(int32_t));
+		if (!new_res)
+			return -1;
+		fpga_raw_results_buf = new_res;
+		fpga_raw_results_cap = m_elems;
+	}
+
+	return 0;
+}
+
+static inline int8_t fpga_round_clamped_i8(float val)
+{
+	if (val > 127.0f)
+		val = 127.0f;
+	if (val < -128.0f)
+		val = -128.0f;
+	return (int8_t)((val >= 0.0f) ? (val + 0.5f) : (val - 0.5f));
+}
 
 static float rms_norm_int8(const float *x, const float *norm_weight,
                            int size, int8_t *out)
@@ -476,22 +574,18 @@ static float rms_norm_int8(const float *x, const float *norm_weight,
 	float rms = 1.0f / sqrtf(sum_sq / size + 1e-6f);
 
 	float max_abs = 0.0f;
-	float *normalized = (float *)malloc((size_t)size * sizeof(float));
 	for (i = 0; i < size; i++) {
-		normalized[i] = x[i] * rms * norm_weight[i];
-		float a = fabsf(normalized[i]);
+		float normalized = x[i] * rms * norm_weight[i];
+		float a = fabsf(normalized);
 		if (a > max_abs) max_abs = a;
 	}
 
 	float scale_x = 127.0f / (max_abs + 1e-5f);
 	for (i = 0; i < size; i++) {
-		float val = normalized[i] * scale_x;
-		if (val > 127.0f) val = 127.0f;
-		if (val < -128.0f) val = -128.0f;
-		out[i] = (int8_t)roundf(val);
+		float normalized = x[i] * rms * norm_weight[i];
+		out[i] = fpga_round_clamped_i8(normalized * scale_x);
 	}
 
-	free(normalized);
 	return scale_x;
 }
 
@@ -512,16 +606,32 @@ static void bitlinear_forward_fpga(const float *x, int K, int M,
                                    int stride,
                                    float *out)
 {
-	int8_t *x_quant = (int8_t *)malloc((size_t)K);
-	float scale_x = rms_norm_int8(x, norm_weight, K, x_quant);
+	int8_t *x_quant = fpga_x_quant_buf;
+	int32_t *raw_results = fpga_raw_results_buf;
+	int use_scratch = fpga_reserve_scratch((size_t)K, (size_t)M) == 0;
+	if (use_scratch) {
+		x_quant = fpga_x_quant_buf;
+		raw_results = fpga_raw_results_buf;
+	} else {
+		x_quant = (int8_t *)malloc((size_t)K);
+		raw_results = (int32_t *)malloc((size_t)M * sizeof(int32_t));
+		if (!x_quant || !raw_results) {
+			free(x_quant);
+			free(raw_results);
+			memset(out, 0, (size_t)M * sizeof(float));
+			return;
+		}
+	}
 
-	int32_t *raw_results = (int32_t *)malloc((size_t)M * sizeof(int32_t));
+	float scale_x = rms_norm_int8(x, norm_weight, K, x_quant);
 	fpga_bitlinear(x_quant, K, weight_base, M, stride, raw_results);
 
 	dequantize_results(raw_results, M, scale_x, weight_scale, out);
 
-	free(x_quant);
-	free(raw_results);
+	if (!use_scratch) {
+		free(x_quant);
+		free(raw_results);
+	}
 }
 
 #endif /* BITNET_FPGA_H */
