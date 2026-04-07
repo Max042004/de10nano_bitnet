@@ -93,7 +93,7 @@
  <interface name="reset" internal="clk_0.clk_in_reset" type="reset" dir="end" />
  <module name="bitnet_accel_0" kind="bitnet_accel" version="1.0" enabled="1" />
  <module name="clk_0" kind="clock_source" version="18.1" enabled="1">
-  <parameter name="clockFrequency" value="50000000" />
+  <parameter name="clockFrequency" value="100000000" />
   <parameter name="clockFrequencyKnown" value="true" />
   <parameter name="inputClockFrequency" value="0" />
   <parameter name="resetSynchronousEdges" value="NONE" />

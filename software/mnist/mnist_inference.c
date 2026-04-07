@@ -91,6 +91,7 @@ static int fpga_layer(const int8_t *activations, int8_t *results,
 	reg_write(g_bitnet, REG_WEIGHT_BASE, DDR3_BASE + ddr3_byte_offset);
 	reg_write(g_bitnet, REG_DIM_M,       (uint32_t)M);
 	reg_write(g_bitnet, REG_DIM_K,       (uint32_t)K);
+	reg_write(g_bitnet, REG_DIM_N3,      (uint32_t)(K / 3));
 	reg_write(g_bitnet, REG_SHIFT_AMT,   (uint32_t)shift);
 
 	reg_write(g_bitnet, REG_CTRL, 0x1);

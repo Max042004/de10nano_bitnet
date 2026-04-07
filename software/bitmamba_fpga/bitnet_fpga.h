@@ -37,7 +37,8 @@
 #define REG_DIM_K            0x10
 #define REG_SHIFT_AMT        0x14
 #define REG_PERF_CYCLES      0x18
-#define REG_NUM_PES          0x1C
+#define REG_NUM_PES          0x1C  /* legacy alias */
+#define REG_DIM_N3           0x1C  /* HPS-supplied K/3 to avoid on-chip divider */
 #define REG_WEIGHTS_PER_BEAT 0x20
 #define REG_ENCODING_MODE    0x24
 #define REG_ACT_DDR3_BASE    0x28
@@ -469,6 +470,7 @@ static void fpga_bitlinear(const int8_t *activations, int K,
 	memcpy((void *)(fpga_ddr3 + fpga_act_ddr3_offset / 4), activations, (size_t)K);
 	fpga_reg_write(REG_ACT_DDR3_BASE, act_phys);
 	fpga_reg_write(REG_DIM_K, (uint32_t)K);
+	fpga_reg_write(REG_DIM_N3, (uint32_t)(K / 3));
 	fpga_reg_write(REG_SHIFT_AMT, 0);
 
 	int rows_done = 0;
@@ -638,6 +640,7 @@ static void bitlinear_forward_fpga(const float *x, int K, int M,
 	memcpy((void *)(fpga_ddr3 + fpga_act_ddr3_offset / 4), x_quant, (size_t)K);
 	fpga_reg_write(REG_ACT_DDR3_BASE, act_phys);
 	fpga_reg_write(REG_DIM_K, (uint32_t)K);
+	fpga_reg_write(REG_DIM_N3, (uint32_t)(K / 3));
 	fpga_reg_write(REG_SHIFT_AMT, 0);
 
 	static int addr_mode_logged = 0;

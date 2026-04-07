@@ -244,6 +244,7 @@ static void test_legacy_path(void)
 		fpga_reg_write(0x80 + i * 4, (uint32_t)(uint8_t)acts[i]);
 
 	fpga_reg_write(REG_DIM_K, (uint32_t)K);
+	fpga_reg_write(REG_DIM_N3, (uint32_t)(K / 3));
 	fpga_reg_write(REG_SHIFT_AMT, 0);
 	fpga_reg_write(REG_WEIGHT_BASE, DDR3_BASE);
 	fpga_reg_write(REG_DIM_M, (uint32_t)M);

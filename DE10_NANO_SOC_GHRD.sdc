@@ -58,7 +58,6 @@ derive_clock_uncertainty
 # Set False Path
 #**************************************************************
 # No logic uses FPGA_CLK1_50 directly — all fabric logic runs on PLL output.
-# Suppress spurious cross-clock analysis between PLL input and output.
 set_false_path -from [get_clocks FPGA_CLK1_50] -to [get_clocks FPGA_CLK1_50]
 
 

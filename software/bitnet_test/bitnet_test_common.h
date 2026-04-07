@@ -33,6 +33,7 @@
 #define REG_DIM_M       0x0C   /* RW: number of output rows */
 #define REG_DIM_K       0x10   /* RW: input vector length */
 #define REG_SHIFT_AMT   0x14   /* RW: requantization shift (0-31) */
+#define REG_DIM_N3      0x1C   /* RW: K/3, supplied by host (T-MAC) */
 #define REG_PERF_CYCLES 0x18   /* R:  cycle count of last run */
 #define REG_ACT_BASE    0x80   /* W:  activation[i] at 0x80 + i*4 */
 #define REG_RES_BASE    0x8000 /* R:  result[i]     at 0x8000 + i*4 */
@@ -262,6 +263,7 @@ static int run_test(const int8_t *wmat, const int8_t *acts,
 	reg_write(g_bitnet, REG_WEIGHT_BASE, DDR3_BASE);
 	reg_write(g_bitnet, REG_DIM_M,       (uint32_t)M);
 	reg_write(g_bitnet, REG_DIM_K,       (uint32_t)K);
+	reg_write(g_bitnet, REG_DIM_N3,      (uint32_t)(K / 3));
 	reg_write(g_bitnet, REG_SHIFT_AMT,   (uint32_t)shift);
 
 	/* Write activations */

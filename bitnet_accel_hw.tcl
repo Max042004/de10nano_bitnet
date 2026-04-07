@@ -25,10 +25,10 @@ set_module_property REPORT_HIERARCHY false
 # file sets
 #
 add_fileset QUARTUS_SYNTH QUARTUS_SYNTH "" ""
-set_fileset_property QUARTUS_SYNTH TOP_LEVEL BitNetAccelerator
+set_fileset_property QUARTUS_SYNTH TOP_LEVEL TMacAccelerator
 set_fileset_property QUARTUS_SYNTH ENABLE_RELATIVE_INCLUDE_PATHS false
 set_fileset_property QUARTUS_SYNTH ENABLE_FILE_OVERWRITE_MODE false
-add_fileset_file BitNetAccelerator.sv SYSTEM_VERILOG PATH bitnet/chisel/generated/BitNetAccelerator.sv
+add_fileset_file TMacAccelerator.sv SYSTEM_VERILOG PATH bitnet/chisel/generated/TMacAccelerator.sv
 
 
 #
@@ -143,7 +143,7 @@ add_interface_port avm_master io_master_writedata writedata Output 128
 add_interface_port avm_master io_master_byteenable byteenable Output 16
 add_interface_port avm_master io_master_waitrequest waitrequest Input 1
 add_interface_port avm_master io_master_readdatavalid readdatavalid Input 1
-add_interface_port avm_master io_master_burstcount burstcount Output 7
+add_interface_port avm_master io_master_burstcount burstcount Output 8
 
 
 #
