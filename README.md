@@ -1,10 +1,12 @@
 # DE10-Nano BitNet Inference SoC
 
-A complete FPGA SoC design that runs BitNet LLM neural network inference on the **Terasic DE10-Nano** (Cyclone V 5CSEBA6U23I7) — using zero DSP blocks. Built on Intel's Golden Hardware Reference Design (GHRD), extended with a custom BitNet b1.58 ternary-weight accelerator written in Chisel.
+A complete FPGA SoC design that runs **BitNet b1.58** LLM inference on the **Terasic DE10-Nano** (Cyclone V 5CSEBA6U23I7) — using **zero DSP blocks**. Built on Intel's Golden Hardware Reference Design (GHRD), extended with a custom **T-MAC (table-based MAC)** accelerator written in Chisel.
+
+Primary target model: **microsoft/bitnet-b1.58-2B-4T**. Secondary: **BitMamba 1B**.
 
 ## What This Does
 
-The ARM Cortex-A9 on the Cyclone V SoC runs Linux and handles quantization, normalization, and control. The FPGA fabric contains a 128-PE accelerator that streams ternary weights from DDR3 and computes matrix-vector products using only LUT logic. Together they run real neural network inference:
+The ARM Cortex-A9 runs Linux and handles tokenization, RMSNorm, RoPE, attention, sampling, and (TurboQuant-quantized) KV cache management. The FPGA fabric contains a **T-MAC accelerator** that streams ternary weights from DDR3 as `nibble + sign` arrays, walks them through 32 parallel LUT-lookup engines, reduces via a 6-level pipelined adder tree, and writes the requantized result back. The main GEMV loop contains **no multipliers, no DSP blocks** — just BRAM, MUXes, and adders.
 
 ## SoC Architecture
 
@@ -12,24 +14,25 @@ The ARM Cortex-A9 on the Cyclone V SoC runs Linux and handles quantization, norm
 DE10-Nano (Cyclone V SoC)
 |
 +-- HPS (ARM Cortex-A9 dual-core, Linux)
-|   +-- DDR3 1GB (shared: Linux + model weights)
-|   +-- h2f_lw_axi_master --> BitNet slave (control/status, activations, results)
-|   +-- f2sdram bridge     <-- BitNet master (256-bit DDR3 weight streaming)
+|   +-- DDR3 1GB (shared: Linux + ternary weights + KV cache)
+|   +-- h2f_lw_axi_master --> TMacAccelerator slave (control/status, activations, results)
+|   +-- f2sdram bridge     <-- TMacAccelerator master (128-bit DDR3 weight streaming)
 |
 +-- FPGA Fabric (100 MHz via PLL)
-|   +-- BitNetAccelerator (Chisel-generated, 128 PEs, 0 DSP)
-|   |   +-- Avalon-MM Slave   - HPS configures dims, DDR3 addresses
-|   |   +-- Avalon-MM Master  - burst-reads 256-bit packed weights from DDR3
-|   |   +-- DDR3-mode activation/result transfer (DMA via f2sdram)
-|   |   +-- 128 Processing Elements (ternary multiply = pass/negate/zero)
-|   |   +-- 7-level pipelined adder tree
-|   |   +-- Double-buffered weight prefetch (hides DDR3 latency)
-|   |   +-- Pipelined DDR3 sub-bursts (overlapped fetch/compute)
+|   +-- TMacAccelerator (Chisel-generated, 32 engines, 0 DSP)
+|   |   +-- Avalon-MM Slave   - HPS configures dims, DDR3 addresses, supplies N3 = K/3
+|   |   +-- Avalon-MM Master  - burst-reads 128-bit nibble + sign streams from DDR3
+|   |   +-- LutBuilder         - 3-stage pipelined LUT construction (read -> compute -> write)
+|   |   +-- LutBram (banks)    - 16-entry x 16-bit LUTs feeding the compute core
+|   |   +-- 32 T-MAC engines   - 16:1 LUT MUX + 2's-complement sign correction
+|   |   +-- 6-level adder tree (fully pipelined)
+|   |   +-- Row accumulator + requantize (shift + clamp)
+|   |   +-- Double-buffered weight prefetch (nibBuf A/B + signBuf A/B)
 |   +-- custom_leds (8-bit LED controller)
 |   +-- pio64_in / pio64_out (64-bit parallel I/O)
 |
 +-- Platform Designer (soc_system.qsys)
-    +-- Interconnect, clock crossings, reset, SDRAM controller
+    +-- Interconnect, clock crossings, reset, SDRAM controller (100 MHz)
 ```
 
 ## Repository Structure
@@ -131,7 +134,7 @@ sudo apt install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
 # Generate SystemVerilog from Chisel (if modifying RTL)
 cd bitnet/chisel
 set JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-11.0.29.7-hotspot
-sbt "runMain bitnet.BitNetAccelMain"
+sbt "runMain bitnet.TMacAccelMain"
 
 # Full Quartus compile
 cd ../..
@@ -162,26 +165,39 @@ sudo ./bitmamba_arm_fpga bitmamba_1b.fpga.bin -i "prompt text"
 sudo ./bitmamba model.bin -i "prompt text"
 ```
 
-## BitNet Accelerator
+## T-MAC Accelerator
 
-The accelerator is the core of this project. Key specs:
+The accelerator is the core of this project. It replaces traditional per-element multiply-accumulate with **table-based lookup**: for every 3 activations `(a0, a1, a2)`, the 16 distinct sums of the form `±a0 ± a1 ± a2` are pre-computed once into a LUT BRAM, and the weight matrix is then walked as a stream of 4-bit nibble indices + 1-bit signs. The main loop has no multipliers.
+
+Key specs:
 
 | Parameter | Value |
 |-----------|-------|
-| Processing Elements | 128 (ternary multiply via LUT) |
-| Avalon Master | 256-bit, burst DDR3 reads |
+| Compute model | T-MAC (table-based MAC), group size = 3 |
+| Engines | 32 parallel LUT lookups per cycle |
+| LUT entries / group | 16 × INT16 (4-bit nibble index) |
+| Avalon Master | 128-bit, burst DDR3 reads (nibble + sign streams) |
 | Avalon Slave | 15-bit address, 32-bit data |
-| Max dimensions | M=1024, K=4096 |
-| Output | Raw 32-bit accumulator (ARM dequantizes) |
-| Adder tree | 7-level, fully pipelined (7 cycles) |
-| Weight prefetch | Double-buffered with pipelined DDR3 sub-bursts |
-| Activation/result | DDR3-mode DMA via f2sdram (M-tile pipelined overlap) |
-| Clock | 100 MHz (PLL from 50 MHz) |
-| DSP blocks | **0** |
+| Max dimensions | M = 1024, **K = 4096** (sized for BitMamba 1B `out_proj`) |
+| Adder tree | 6-level, fully pipelined |
+| Pipeline depth | 10 stages |
+| Weight prefetch | Double-buffered (`nibBuf A/B` + `signBuf A/B`) with pipelined DDR3 sub-bursts |
+| Clock | **100 MHz** (PLL from 50 MHz) |
+| **DSP blocks** | **0** |
 
-The accelerator outputs raw accumulator values instead of requantized INT8. This preserves full precision for ARM-side dequantization, which is critical for accurate 1B model inference. DDR3-mode transfers activations and results through the f2sdram bridge, enabling pipelined M-tile dequantization overlap for higher throughput.
+### 100 MHz Timing Closure
 
-For register map, weight packing format, and detailed architecture, see [`bitnet/README.md`](bitnet/README.md) and [`docs/partner_guide.md`](docs/partner_guide.md).
+Closing 100 MHz on Cyclone V required several micro-architectural rewrites driven by TimeQuest worst-path reports:
+
+| Optimization | Result |
+|--------------|--------|
+| **HPS supplies `REG_DIM_N3 = K/3` (offset `0x1C`)** | Removed a 17-level combinational divider for the non-power-of-2 `K/3`. Setup slack −19.846 ns → −4.744 ns; Fmax 34 MHz → 67 MHz. |
+| **WeightStreamer per-row stride accumulator** | Eliminated `rowIdx × tilesPerRow` and `rowIdx × signBeats` variable×variable LUT multipliers. |
+| **LutBuilder 3-stage pipeline (`sRead → sCompute → sWrite`)** | Broke the BRAM → 16 INT16 adders → BRAM single-cycle critical path. |
+| **TMacComputeCore split LUT MUX / sign correction** | The 16:1 MUX on a 256-bit LUT word + conditional negate now span two pipeline stages. |
+| **QSys `clk_0.clockFrequency` 50 → 100 MHz** | The PLL was producing 100 MHz but the QSys clock declaration mismatched STA constraints. |
+
+For the full register map, weight format, T-MAC algorithm details, and Chisel module map, see [`bitnet/README.md`](bitnet/README.md) and [`docs/partner_guide.md`](docs/partner_guide.md).
 
 ## Build Targets
 
@@ -208,10 +224,10 @@ cd bitnet/chisel
 sbt compile                          # Compile Chisel sources
 sbt test                             # Run all 8 test suites
 sbt "testOnly bitnet.<TestName>"     # Run single test suite
-sbt "runMain bitnet.BitNetAccelMain" # Generate SystemVerilog
+sbt "runMain bitnet.TMacAccelMain"   # Generate SystemVerilog
 ```
 
-Output goes to `bitnet/chisel/generated/BitNetAccelerator.sv`.
+Output goes to `bitnet/chisel/generated/TMacAccelerator.sv`. All 82 ScalaTest cases pass on the current `turbo` branch.
 
 ## License
 
